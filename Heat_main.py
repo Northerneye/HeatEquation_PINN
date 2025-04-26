@@ -2,40 +2,41 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import random
+import math
 
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+#import os
+#os.environ["KMP_DUPLICATE_LIB_OK"]="FALSE"
 
 from heat_network import Net, NetDiscovery, get_results
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = "cpu"#torch.device('xpu' if torch.xpu.is_available() else 'cpu')
+print(f"Using: {DEVICE}")
 
 #torch.manual_seed(42)
 #np.random.seed(10)
 
 dist = 1
 
-starting_positions = np.array([[i/100*dist, 0.0] for i in range(101)])
-left_boundary = np.array([[0.0, i/100*dist] for i in range(101)])
-right_boundary = np.array([[1.0*dist, i/100*dist] for i in range(101)])
+input_res = 100
+starting_positions = np.array([[i/input_res*dist, 0.0] for i in range(input_res+1)])
+left_boundary = np.array([[0.0, i/input_res*dist] for i in range(input_res+1)])
+right_boundary = np.array([[1.0*dist, i/input_res*dist] for i in range(input_res+1)])
 inputs = np.concatenate((starting_positions, left_boundary, right_boundary))
-inputs = torch.from_numpy(inputs.astype(np.float32))
+inputs = torch.from_numpy(inputs.astype(np.float32)).to(DEVICE)
 
-starting_values = np.zeros((101, 1))
-starting_values[:51, :] = 1.0
-left_values = np.zeros((101, 1))
+starting_values = np.zeros((input_res+1, 1))
+starting_values[:math.floor(input_res/2)+1, :] = 1.0
+left_values = np.zeros((input_res+1, 1))
 left_values[:, :] = 1.0
-right_values = np.zeros((101, 1))
+right_values = np.zeros((input_res+1, 1))
 labels = np.concatenate((starting_values, left_values, right_values))
-labels = torch.from_numpy(labels.astype(np.float32))
+labels = torch.from_numpy(labels.astype(np.float32)).to(DEVICE)
 
 def l2_reg(model: torch.nn.Module):
     return torch.sum(sum([p.pow(2.) for p in model.parameters()]))
 
 def physics_loss(model: torch.nn.Module):
-    a = [random.random()*dist for i in range(11)]
-    b = [random.random()*dist for i in range(11)]
-    c = np.array([[i, j] for i in a for j in b])
+    c = np.random.random((101, 2))*dist
     x = torch.from_numpy(c.astype(np.float32)).requires_grad_(True).to(DEVICE)
     u = model(x)
     
@@ -57,11 +58,12 @@ def total_loss(model: torch.nn.Module):
     return pde_loss #+ 0.01*l2_loss
 
 
-net = Net(loss2=total_loss, epochs=10000, loss2_weight=1, lr=3e-3, embedding_dim=8, dist=dist).to(DEVICE)
+net = Net(loss2=physics_loss, epochs=10000, loss2_weight=1, lr=3e-3, embedding_dim=8, dist=dist, device=DEVICE)
+net.to(DEVICE)
 
 losses = net.fit(inputs, labels)
 plt.plot(losses)
 plt.yscale('log')
 plt.show()
 
-get_results(net, inputs, labels, dist=dist)
+get_results(net, inputs, labels, dist=dist, device=DEVICE)

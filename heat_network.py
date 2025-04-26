@@ -2,20 +2,18 @@ import os
 import imageio
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def get_results(model, inputs, labels, save=False, name="final", dist=1.0):
+def get_results(model, inputs, labels, save=False, name="final", dist=1.0, device="cpu"):
     plt.plot(inputs[:101, 0], labels[:101], alpha=0.8, label="Exact")
     for j in range(5):
         a = np.linspace(0, dist, 101)
         c = np.array([[i, j/5] for i in a])
-        x = torch.from_numpy(c.astype(np.float32)).requires_grad_(True).to(DEVICE)
+        x = torch.from_numpy(c.astype(np.float32)).requires_grad_(True).to(device)
         preds = model.predict(x)
 
         plt.plot(a, preds[:,0], alpha=0.8, label="PINN, t="+str(j))
@@ -29,7 +27,7 @@ def get_results(model, inputs, labels, save=False, name="final", dist=1.0):
         plt.show()
 
 class Net(nn.Module):
-    def __init__(self, n_hidden=30, epochs=1000, loss=nn.MSELoss(), lr=1e-3, loss2=None, loss2_weight=1.0, embedding_dim=4, dist=1.0) -> None:
+    def __init__(self, n_hidden=30, epochs=1000, loss=nn.MSELoss(), lr=1e-3, loss2=None, loss2_weight=1.0, embedding_dim=4, dist=1.0, device="cpu") -> None:
         super().__init__()
 
         self.epochs = epochs
@@ -40,6 +38,7 @@ class Net(nn.Module):
         self.n_hidden = n_hidden
         self.embedding_dim = embedding_dim
         self.dist = dist
+        self.device = device
 
         self.layers = nn.Sequential(
             #nn.Linear(2, self.n_hidden),
@@ -73,6 +72,8 @@ class Net(nn.Module):
         return out
 
     def fit(self, X, y):
+        X.to(self.device)
+        y.to(self.device)
         newpath = "./heat_run" 
         if not os.path.exists(newpath):
             os.makedirs(newpath)
@@ -81,18 +82,25 @@ class Net(nn.Module):
         self.train()
         losses = []
         for ep in range(self.epochs):
+            # Backprop to minimize input loss
             optimiser.zero_grad()
             outputs = self.forward(X)
             loss = self.loss(y, outputs)
-            if self.loss2:
-                loss += self.loss2_weight * self.loss2(self)
             loss.backward()
             optimiser.step()
             losses.append(loss.item())
+            
+            # Backprop to minimize physics loss
+            if self.loss2:
+                optimiser.zero_grad()
+                loss = self.loss2_weight * self.loss2(self)
+                loss.backward()
+                optimiser.step()
+
             if ep % int(self.epochs / 50) == 0:
                 print(f"Epoch {ep}/{self.epochs}, loss: {losses[-1]:.2f}")
                 get_results(self, X, y, save=True, name=ep, dist=self.dist)
-        
+                
         # Save training graphs as gif
         images = []
         for i in range(self.epochs+1):
